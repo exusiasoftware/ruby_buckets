@@ -4,6 +4,7 @@ end
 
 require 'aws-sdk-s3'
 require 'tk'
+require 'yaml'
 ###############################################################################
 ###############################################################################
 # Ruby_Bucket AWS Bucket management tool                                      #
@@ -354,6 +355,95 @@ end
 
 ###############################################################################
 ###############################################################################
+# Write Credentials to YAML file Method                                       #
+###############################################################################
+###############################################################################
+
+def aws_credentials(access_key, secret_access_key)
+  unless access_key.empty? || secret_access_key.empty?
+    credentials = { access_key_id: access_key, secret_access_key: secret_access_key }
+    File.write('.credentials.yml', credentials.to_yaml)
+    $preferences_window.destroy
+  else 
+    Tk.messageBox('type' => 'ok',
+      'icon' => 'error',
+      'title' => 'Keys',
+      'message' => 'Access and secret keys must not be empty')  
+  end  
+end
+
+###############################################################################
+###############################################################################
+# Preferences Option Method                                                  #
+###############################################################################
+###############################################################################
+
+def PreferencesDialog
+  $preferences_window = TkToplevel.new() { title "Preferences" }
+  $preferences_window.minsize(400,200)
+  begin
+    read_file = YAML.load_file('.credentials.yml')
+  rescue
+     puts "can't read .credentials.yml file"
+  end
+  
+  option_frame = TkFrame.new($preferences_window) {
+    relief 'groove'
+    borderwidth 1
+    padx 5
+    pady 5
+    place('relx' => 0.05, 'rely' => 0.02)
+  }
+  one_frame = TkFrame.new(option_frame) {
+    relief 'groove'
+    borderwidth 1
+    padx 5
+    pady 5
+    pack('side' => 'top')
+  }
+
+  TkLabel.new(one_frame) {
+    text '       Access Key ID:'
+    foreground 'black'
+    pack('side' => 'left')
+  }
+  two_frame = TkFrame.new(option_frame) {
+    relief 'groove'
+    borderwidth 1
+    padx 5
+    pady 5
+    pack('side' => 'bottom')
+  }
+  TkLabel.new(two_frame) {
+    text 'Secret Access Key:'
+    foreground 'black'
+    pack('side' => 'left')
+  }
+  txt_secret_access_key  = TkEntry.new(two_frame)
+  txt_secret_access_key.pack('side' => 'right', 'padx' => '10', 'pady' => '10')
+
+  txt_access_key = TkEntry.new(one_frame)
+  txt_access_key.pack('side' => 'right', 'padx' => '10', 'pady' => '10')
+  if read_file
+    unless read_file[:access_key_id].empty?
+      txt_access_key.value = read_file[:access_key_id]
+    end
+    unless read_file[:secret_access_key].empty?
+      txt_secret_access_key.value = read_file[:secret_access_key]
+    end
+  end
+
+  TkButton.new($preferences_window) {
+    text 'Save'
+    command(proc { aws_credentials(txt_access_key.value, txt_secret_access_key.value) })
+    pack('padx' => '50', 'pady' => '10', 'side' => 'bottom')
+  }
+
+end
+
+
+###############################################################################
+###############################################################################
 # Bucket Public Read Access Method                                          #
 ###############################################################################
 ###############################################################################
@@ -494,7 +584,17 @@ end
 
 def connect_aws
   begin
-    $s3 = Aws::S3::Resource.new(region: $region)
+    read_file = YAML.load_file('.credentials.yml')
+  rescue
+     puts "can't read .credentials.yml file"
+     Tk.messageBox('type' => 'ok',
+      'icon' => 'error',
+      'title' => 'Select Bucket',
+      'message' => 'Please add AWS credentials in the Preference Menu')
+  end
+
+  begin
+    $s3 = Aws::S3::Resource.new(region: $region, credentials: Aws::Credentials.new(read_file[:access_key_id], read_file[:secret_access_key]),)
     $bucket_list = Array.new($s3.buckets.count)
     ct = 0
     $s3.buckets.each do |bucket|
@@ -543,7 +643,9 @@ $main_window = TkRoot.new {
   height 400
 }
 $main_window.title = $title
+TkOption.add '*tearOff', 0
 file_menu = TkMenu.new($main_window)
+Tk.ip_eval("proc ::tk::mac::ShowPreferences {} {#{Tk.install_cmd(proc{ PreferencesDialog() })}}")
 options_menu = TkMenu.new($main_window)
 options_menu.add('command',
   'label' => 'us-east-1, US East(N. Virginia)',
@@ -614,7 +716,11 @@ file_menu.add('command',
               'label' => 'Connect to AWS',
               'command' => (proc { connect_aws() }),
               'underline' => 3)
-menu_bar = TkMenu.new
+menu_bar = TkMenu.new($main_window)
+appmenu = TkSysMenu_Apple.new(menu_bar)
+appmenu.add :command, :label => 'About My Application'
+appmenu.add :separator
+menu_bar.add :cascade, :menu => appmenu
 menu_bar.add('cascade',
              'menu'  => file_menu,
              'label' => 'Go')
