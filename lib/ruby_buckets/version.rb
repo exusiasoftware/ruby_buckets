@@ -5,6 +5,8 @@ end
 require 'aws-sdk-s3'
 require 'tk'
 require 'yaml'
+require 'tkextlib/bwidget'
+
 ###############################################################################
 ###############################################################################
 # Ruby_Bucket AWS Bucket management tool                                      #
@@ -62,6 +64,7 @@ def show_bucket_path
       $bucket_public_read.state = 'disabled'
       $bucket_public_write.state = 'disabled'
       $lb_bucket_name.text = ''
+      $lb_bucket_items_qty.text = ''
     end
   else
     Tk.messageBox('type' =>  'ok',
@@ -89,17 +92,18 @@ def show_item_path
     $item_public_write.state = 'normal'
     $item_text.delete('1.0','end')
     $item_text.insert 'end',$bucket_string
-    client = Aws::S3::Client.new(region: 'us-west-2')
-    resp = client.get_object_acl(bucket: $bucket,key: $bucket_item)
+    resp = $s3.client.get_object_acl(bucket: $bucket,key: $bucket_item)
     if resp.grants[1]
       get_permission = resp.grants[1].permission
       if get_permission == 'READ'
         $item_public_read.select()
       end
-      # get_permission2 = resp.grants[2].permission
-      # if get_permission2 == 'WRITE'
-      #   $item_public_write.select()
-      # end
+    end
+    if resp.grants[2]
+      get_permission2 = resp.grants[2].permission
+      if get_permission2 == 'WRITE'
+        $item_public_write.select()
+      end
     end
   else
     Tk.messageBox('type' =>  'ok',
@@ -144,7 +148,7 @@ end
 ###############################################################################
 
 def file_public_read
-  if $public_read.variable() == 1
+  if $item_public_read.variable() == 1
     $s3.client.put_object_acl(acl: 'public-read',
                               bucket: $bucket,
                               key: $bucket_item)
@@ -154,6 +158,26 @@ def file_public_read
                               key: $bucket_item)
   end
 end
+
+###############################################################################
+###############################################################################
+# File Public Write Access Method                                             #
+###############################################################################
+###############################################################################
+
+def file_public_write
+  if $item_public_write.variable() == 1
+    $s3.client.put_object_acl(acl: ' public-read-write',
+                              bucket: $bucket,
+                              key: $bucket_item)
+  else
+    $s3.client.put_object_acl(acl: 'private',
+                              bucket: $bucket,
+                              key: $bucket_item)
+  end
+end
+
+
 
 ###############################################################################
 ###############################################################################
@@ -169,7 +193,7 @@ def save_file
     obj = $s3.bucket($bucket).object($bucket_item)
     filename = Tk::getSaveFile(:initialfile => $bucket_item)
     begin
-      if !filename.empty?
+      unless filename.empty?
         obj.get(response_target: filename)
       end
     rescue
@@ -199,6 +223,11 @@ def delete_file
     if ok_delete == 'ok'
       begin
         $s3.bucket($bucket).objects(prefix: $bucket_item).batch_delete!
+        $item_text.delete('1.0','end')
+        $save_file_button.state = 'disabled'
+        $delete_file_button.state = 'disabled'
+        $item_public_read.state = 'disabled'
+        $item_public_write.state = 'disabled'
       rescue => e
         Tk.messageBox('type' => 'ok',
                       'icon' =>  'error',
@@ -219,6 +248,7 @@ def upload_file
   filename = Tk::getOpenFile
   begin
     unless filename.empty?
+      $file_progress_variable = TkVariable.new
       file = File.open(filename, 'rb')
       name = File.basename(filename)
       # test to see if the file is bigger than 100 MB for multipart upload
@@ -263,7 +293,6 @@ def upload_file
                   'title' => 'Cannot Open File',
                   'message' => "Cannot Open File #{e}")
   end
-  
 end
 
 ###############################################################################
@@ -384,9 +413,8 @@ def PreferencesDialog
   begin
     read_file = YAML.load_file('.credentials.yml')
   rescue
-     puts "can't read .credentials.yml file"
+    puts "can't read .credentials.yml file"
   end
-  
   option_frame = TkFrame.new($preferences_window) {
     relief 'groove'
     borderwidth 1
@@ -401,7 +429,6 @@ def PreferencesDialog
     pady 5
     pack('side' => 'top')
   }
-
   TkLabel.new(one_frame) {
     text '       Access Key ID:'
     foreground 'black'
@@ -421,7 +448,6 @@ def PreferencesDialog
   }
   txt_secret_access_key  = TkEntry.new(two_frame)
   txt_secret_access_key.pack('side' => 'right', 'padx' => '10', 'pady' => '10')
-
   txt_access_key = TkEntry.new(one_frame)
   txt_access_key.pack('side' => 'right', 'padx' => '10', 'pady' => '10')
   if read_file
@@ -432,15 +458,12 @@ def PreferencesDialog
       txt_secret_access_key.value = read_file[:secret_access_key]
     end
   end
-
   TkButton.new($preferences_window) {
     text 'Save'
     command(proc { aws_credentials(txt_access_key.value, txt_secret_access_key.value) })
     pack('padx' => '50', 'pady' => '10', 'side' => 'bottom')
   }
-
 end
-
 
 ###############################################################################
 ###############################################################################
@@ -553,7 +576,7 @@ def open_bucket
       relief 'groove'
       height 5
       pack('side' => 'left')
-      command(proc { file_public_read() })
+      command(proc { file_public_write() })
       state 'disabled'
     end
     quit_frame = TkFrame.new($bucket_item_window) {
@@ -562,6 +585,14 @@ def open_bucket
       padx 5
       pady 5
       place('relx' => 0.35,'rely' => 0.80)
+    }
+
+    file_progress_frame = TkFrame.new($bucket_item_window) {
+      relief 'groove'
+      borderwidth 1
+      padx 5
+      pady 5
+      place('relx' => 0.1,'rely' => 0.80)
     }
     TkButton.new(quit_frame) {
       text 'Close Window'
@@ -586,13 +617,12 @@ def connect_aws
   begin
     read_file = YAML.load_file('.credentials.yml')
   rescue
-     puts "can't read .credentials.yml file"
-     Tk.messageBox('type' => 'ok',
-      'icon' => 'error',
-      'title' => 'Select Bucket',
-      'message' => 'Please add AWS credentials in the Preference Menu')
+    puts "can't read .credentials.yml file"
+    Tk.messageBox('type' => 'ok',
+                  'icon' => 'error',
+                  'title' => 'Select Bucket',
+                  'message' => 'Please add AWS credentials in the Preference Menu')
   end
-
   begin
     $s3 = Aws::S3::Resource.new(region: $region, credentials: Aws::Credentials.new(read_file[:access_key_id], read_file[:secret_access_key]),)
     $bucket_list = Array.new($s3.buckets.count)
@@ -607,7 +637,7 @@ def connect_aws
       borderwidth 1
       padx 5
       pady 5
-      place('relx' => 0.1,'rely' => 0.20)
+      place('relx' => 0.03,'rely' => 0.20)
     }
     $list = TkListbox.new(bucket_list_frame) do
       listvariable items
@@ -625,6 +655,14 @@ def connect_aws
     })
     $select_button.state = 'normal'
     $create_bucket.state = 'normal'
+    $delete_button.state = 'disabled'
+    $open_button.state = 'disabled'
+    $lb_bucket_name.text = 'Bucket Name:'
+    $lb_bucket_region.text = 'Bucket region:'
+    $bucket_public_read.state = 'disabled'
+    $bucket_public_write.state = 'disabled'
+    $lb_bucket_items_qty.text = ''
+
   rescue
     Tk.messageBox('type' => 'ok',
                   'icon' => 'error',
@@ -638,6 +676,7 @@ end
 # Main Window                                                                 #
 ###############################################################################
 ###############################################################################
+
 $main_window = TkRoot.new {
   width 800
   height 400
@@ -733,12 +772,12 @@ title_frame = TkFrame.new($main_window) {
   borderwidth 1
   padx 5
   pady 5
-  place('relx' => 0.1,'rely' => 0.03)
+  place('relx' => 0.03,'rely' => 0.03)
 }
 TkLabel.new(title_frame) {
   text $title
   foreground 'black'
-  pack('padx' => 200, 'pady' => 2, 'side' => 'top', 'fill' => 'x')
+  pack('padx' => 300, 'pady' => 2, 'side' => 'top', 'fill' => 'x')
 }
 $region_title = TkLabel.new(title_frame) {
   text "Region: #{$region}"
@@ -750,7 +789,7 @@ bucket_action = TkFrame.new($main_window) {
   borderwidth 1
   padx 1
   pady 1
-  place('relx'=> 0.43,'rely'=>0.60)
+  place('relx'=> 0.32,'rely'=>0.55)
 }
 $select_button = TkButton.new(bucket_action) {
   text 'Select Bucket'
@@ -781,7 +820,7 @@ bucket_info_frame = TkFrame.new($main_window) {
   borderwidth 1
   padx 1
   pady 1
-  place('relx' => 0.43,'rely' => 0.20)
+  place('relx' => 0.32,'rely' => 0.20)
 }
 $lb_bucket_name = TkLabel.new(bucket_info_frame) {
   text 'Bucket Name:'
@@ -815,7 +854,7 @@ bucket_permissions_frame = TkFrame.new($main_window) {
   borderwidth 1
   padx 5
   pady 5
-  place('relx'=>0.43,'rely'=>0.48)
+  place('relx'=>0.50,'rely'=>0.55)
 }
 TkLabel.new(bucket_permissions_frame) {
   text 'Public Access:'
